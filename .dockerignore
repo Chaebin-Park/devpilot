@@ -1,5 +1,6 @@
 .gradle/
 build/
+!build/libs/devpilot.jar
 .idea/
 .kotlin/
 .omc/
