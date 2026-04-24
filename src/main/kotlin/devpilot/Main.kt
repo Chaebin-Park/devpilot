@@ -10,7 +10,13 @@ import devpilot.command.MemoryCommand
 import devpilot.command.ModeCommand
 import devpilot.command.ModelCommand
 import devpilot.command.SetupCommand
+import devpilot.config.AgentStrategyConfig
 import devpilot.config.DevPilotConfig
+import devpilot.config.ModelConfig
+import devpilot.config.OllamaDiscovery
+import devpilot.config.Presets
+import devpilot.config.Provider
+import devpilot.config.RoutingStrategy
 import devpilot.config.SetupWizard
 import devpilot.config.StrategyConfigStorage
 import devpilot.config.loadDotEnvKeys
@@ -31,12 +37,22 @@ fun main(args: Array<String>) = runBlocking {
     val configStorage = StrategyConfigStorage(primaryDir)
     val reader = BufferedReader(InputStreamReader(System.`in`, Charsets.UTF_8))
     val wizard = SetupWizard(configStorage)
-    val globalConfig = if (wizard.needsSetup()) {
-        runCatching { wizard.run(reader) }.getOrElse { e ->
+    val webMode = args.any { it == "--web" }
+    val globalConfig = when {
+        !wizard.needsSetup() -> loadConfig(configStorage)
+        OllamaDiscovery.isRunning() -> autoConfigureFromOllama(configStorage)
+        hasAnyApiKey() -> autoConfigureFromEnv(configStorage)
+        webMode -> {
+            println("  ⚠️  설정된 모델이 없습니다.")
+            println("  API 키 환경변수를 설정하거나 Ollama를 실행한 뒤 재시작하세요.")
+            println("  예) docker-compose up   또는   GOOGLE_API_KEY=xxx ./devpilot.sh --web")
+            return@runBlocking
+        }
+        else -> runCatching { wizard.run(reader) }.getOrElse { e ->
             println("  설정 오류: ${e.message}")
             return@runBlocking
         }
-    } else loadConfig(configStorage)
+    }
 
     // 프로젝트별 agent 생성 (중복 이름은 -1, -2 suffix 처리)
     val agents = linkedMapOf<String, DevPilotAgent>()
@@ -65,7 +81,6 @@ fun main(args: Array<String>) = runBlocking {
         SetupCommand(wizard, reader) { newConfig -> agents.values.forEach { it.updateConfig(newConfig) } },
     )
 
-    val webMode = args.any { it == "--web" }
     val webPort = args.firstOrNull { it.startsWith("--port=") }?.removePrefix("--port=")?.toIntOrNull() ?: 8080
 
     println()
@@ -159,6 +174,55 @@ fun main(args: Array<String>) = runBlocking {
 
 private fun isRipgrepAvailable(): Boolean =
     runCatching { ProcessBuilder("rg", "--version").start().waitFor() == 0 }.getOrDefault(false)
+
+private fun hasAnyApiKey(): Boolean {
+    val dotEnv = loadDotEnvKeys()
+    return listOf("GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY").any { key ->
+        !System.getenv(key).isNullOrBlank() || !dotEnv[key].isNullOrBlank()
+    }
+}
+
+private fun autoConfigureFromOllama(storage: StrategyConfigStorage): DevPilotConfig {
+    val models = OllamaDiscovery.listModels()
+    val primary = models.firstOrNull() ?: "llama3.2"
+    println("  🤖 Ollama 자동 감지: $primary" + if (models.size > 1) " (외 ${models.size - 1}개)" else "")
+    val config = DevPilotConfig(
+        strategy = AgentStrategyConfig(
+            strategy = RoutingStrategy.PRIMARY,
+            primary  = ModelConfig(Provider.OLLAMA, primary),
+            critic   = ModelConfig(Provider.OLLAMA, primary),
+        )
+    )
+    storage.save(config)
+    println("  ✅ 자동 설정 완료 (/setup 으로 변경 가능)")
+    return config
+}
+
+private fun autoConfigureFromEnv(storage: StrategyConfigStorage): DevPilotConfig {
+    val dotEnv = loadDotEnvKeys()
+    fun key(env: String) = System.getenv(env)?.takeIf { it.isNotBlank() } ?: dotEnv[env]
+    val googleKey    = key("GOOGLE_API_KEY")
+    val anthropicKey = key("ANTHROPIC_API_KEY")
+    val openaiKey    = key("OPENAI_API_KEY")
+
+    val (strategy, providerName) = when {
+        googleKey    != null -> Presets.CLOUD_GOOGLE to "Google Gemini"
+        anthropicKey != null -> Presets.CLOUD_CLAUDE to "Anthropic Claude"
+        else                 -> Presets.CLOUD_GOOGLE.copy(
+            primary = ModelConfig(Provider.OPENAI, "gpt-4o")
+        ) to "OpenAI"
+    }
+    val apiKeys = buildMap {
+        googleKey?.let    { put("google",    it) }
+        anthropicKey?.let { put("anthropic", it) }
+        openaiKey?.let    { put("openai",    it) }
+    }
+    println("  🔑 API 키 자동 감지: $providerName")
+    val config = DevPilotConfig(apiKeys = apiKeys, strategy = strategy)
+    storage.save(config)
+    println("  ✅ 자동 설정 완료 (/setup 으로 변경 가능)")
+    return config
+}
 
 private fun loadConfig(storage: StrategyConfigStorage): DevPilotConfig {
     var config = storage.load()
