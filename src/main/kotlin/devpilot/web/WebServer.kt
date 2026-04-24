@@ -131,9 +131,12 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
 
             // ── 디렉터리 브라우저 ──────────────────────────────────────
             get("/api/browse") {
-                val path = call.request.queryParameters["path"]
+                val browseRoot = System.getenv("DEVPILOT_BROWSE_ROOT")
                     ?.takeIf { it.isNotBlank() }
                     ?: System.getProperty("user.home")
+                val path = call.request.queryParameters["path"]
+                    ?.takeIf { it.isNotBlank() }
+                    ?: browseRoot
                 val dir = java.io.File(path)
                 if (!dir.exists() || !dir.isDirectory)
                     return@get call.respondError("유효하지 않은 경로: $path")

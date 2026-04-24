@@ -29,10 +29,11 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEVPILOT_BROWSE_ROOT=/host-home
     volumes:
       - devpilot-config:/root/.devpilot
-      - ${PROJECT_DIR:-.}:/workspace
-    command: ["--web", "-d=/workspace"]
+      - ${HOME}:/host-home
+    command: ["--web"]
     depends_on:
       ollama-pull:
         condition: service_completed_successfully
