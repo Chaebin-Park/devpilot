@@ -28,6 +28,10 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
         routing {
             get("/") {
                 val currentProjects = synchronized(agents) { agents.keys.toList() }
+                if (currentProjects.isEmpty()) {
+                    call.respondText(landingHtml(), ContentType.Text.Html)
+                    return@get
+                }
                 val p = call.request.queryParameters["p"]
                 val agent = if (p != null) agents[p] else null
                 if (agent != null) {
@@ -39,6 +43,10 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
             get("/settings") { call.respondText(settingsHtml(), ContentType.Text.Html) }
             webSocket("/ws") {
                 val currentProjects = synchronized(agents) { agents.keys.toList() }
+                if (currentProjects.isEmpty()) {
+                    close(CloseReason(CloseReason.Codes.NORMAL, "no projects"))
+                    return@webSocket
+                }
                 val p = call.request.queryParameters["p"] ?: currentProjects.first()
                 val agent = agents[p] ?: agents.values.first()
                 handleSession(agent)
@@ -313,6 +321,134 @@ private suspend fun DefaultWebSocketServerSession.handleSession(agent: DevPilotA
         agent.progressSink = ::println
     }
 }
+
+private fun landingHtml() = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevPilot</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 14px 20px; border-bottom: 1px solid #21262d; display: flex; align-items: center; gap: 12px; background: #161b22; flex-shrink: 0; }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: .5px; }
+  .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 40px; }
+  .icon { font-size: 56px; }
+  h2 { font-size: 22px; font-weight: 600; color: #e6edf3; }
+  p { font-size: 14px; color: #8b949e; line-height: 1.7; text-align: center; max-width: 420px; }
+  .add-btn { display: flex; align-items: center; gap: 10px; background: #1f6feb; color: #fff; border: none; border-radius: 10px; padding: 14px 28px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background .15s; }
+  .add-btn:hover { background: #388bfd; }
+  /* 모달 */
+  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200; align-items: center; justify-content: center; }
+  .modal-backdrop.show { display: flex; }
+  .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 28px 32px; max-width: 520px; width: 90%; }
+  .modal h2 { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
+  #browser-path { font-size: 12px; font-family: monospace; color: #58a6ff; margin-bottom: 10px; word-break: break-all; }
+  #browser-list { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; max-height: 280px; overflow-y: auto; margin-bottom: 12px; }
+  #add-project-error { color: #ff7b72; font-size: 12px; margin-bottom: 10px; display: none; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  .btn { padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: background .15s; }
+  .btn-secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
+  .btn-secondary:hover { background: #30363d; }
+  .btn-primary { background: #1f6feb; color: #fff; }
+  .btn-primary:hover { background: #388bfd; }
+  ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header><h1>⚡ DevPilot</h1></header>
+<div class="center">
+  <div class="icon">📂</div>
+  <h2>프로젝트를 추가해 시작하세요</h2>
+  <p>분석할 코드베이스 폴더를 선택하면<br>DevPilot이 바로 질문에 답할 준비를 합니다.</p>
+  <button class="add-btn" onclick="openAddProject()">
+    <span style="font-size:20px">+</span> 프로젝트 추가
+  </button>
+</div>
+
+<div class="modal-backdrop" id="add-project-modal">
+  <div class="modal">
+    <h2>프로젝트 폴더 선택</h2>
+    <div id="browser-path"></div>
+    <div id="browser-list"></div>
+    <div id="add-project-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeAddProject()">취소</button>
+      <button class="btn btn-primary" onclick="confirmAddProject()">이 폴더 선택</button>
+    </div>
+  </div>
+</div>
+<script>
+let browserCurrentPath = '';
+
+async function browseTo(path) {
+  const res = await fetch('/api/browse?path=' + encodeURIComponent(path));
+  const data = await res.json();
+  if (!data.ok && data.message) {
+    document.getElementById('add-project-error').textContent = data.message;
+    document.getElementById('add-project-error').style.display = 'block';
+    return;
+  }
+  browserCurrentPath = data.path;
+  document.getElementById('browser-path').textContent = data.path;
+  document.getElementById('add-project-error').style.display = 'none';
+  const list = document.getElementById('browser-list');
+  list.innerHTML = '';
+  const itemStyle = 'display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #21262d;color:#e6edf3;';
+  if (data.parent) {
+    const up = document.createElement('div');
+    up.style.cssText = itemStyle + 'color:#8b949e;';
+    up.innerHTML = '<span style="font-size:16px">↑</span> 상위 폴더';
+    up.onmouseenter = () => up.style.background = '#1f2937';
+    up.onmouseleave = () => up.style.background = '';
+    up.onclick = () => browseTo(data.parent);
+    list.appendChild(up);
+  }
+  if (data.dirs.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:12px;color:#6e7681;font-size:12px;text-align:center;';
+    empty.textContent = '하위 폴더 없음';
+    list.appendChild(empty);
+  }
+  data.dirs.forEach(name => {
+    const row = document.createElement('div');
+    row.style.cssText = itemStyle;
+    row.innerHTML = '<span style="color:#ffa657">📁</span>' + name;
+    row.onmouseenter = () => row.style.background = '#1f2937';
+    row.onmouseleave = () => row.style.background = '';
+    row.onclick = () => browseTo(data.path + '/' + name);
+    list.appendChild(row);
+  });
+}
+
+async function openAddProject() {
+  document.getElementById('add-project-modal').classList.add('show');
+  if (!browserCurrentPath) await browseTo('');
+}
+
+function closeAddProject() {
+  document.getElementById('add-project-modal').classList.remove('show');
+}
+
+async function confirmAddProject() {
+  if (!browserCurrentPath) return;
+  const errEl = document.getElementById('add-project-error');
+  errEl.style.display = 'none';
+  const res = await fetch('/api/projects', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ dir: browserCurrentPath }) });
+  const data = await res.json();
+  if (data.ok) {
+    window.location.href = '/?p=' + encodeURIComponent(data.name);
+  } else {
+    errEl.textContent = data.message;
+    errEl.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>
+""".trimIndent()
 
 private fun chatHtml(currentProject: String, allProjects: List<String>) = """
 <!DOCTYPE html>

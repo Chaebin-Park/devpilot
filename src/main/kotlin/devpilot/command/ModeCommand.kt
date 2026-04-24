@@ -2,13 +2,14 @@ package devpilot.command
 
 import devpilot.agent.DevPilotAgent
 
-class ModeCommand(private val agent: DevPilotAgent) : Command {
+class ModeCommand(private val agent: DevPilotAgent?) : Command {
     override val name = "mode"
     override val aliases = emptyList<String>()
     override val description = "라우팅 모드를 전환합니다 (primary / fallback / auto)"
     override val usage = "/mode [primary|fallback|auto|status]"
 
     override suspend fun execute(args: List<String>): CommandResult {
+        if (agent == null) return CommandResult.Error("CLI 모드에서만 사용 가능합니다.")
         return when (args.firstOrNull()?.lowercase()) {
             "primary" -> {
                 agent.forcePrimary()

@@ -30,14 +30,18 @@ import java.net.URI
 import kotlinx.coroutines.runBlocking
 
 fun main(args: Array<String>) = runBlocking {
-    val targetDirs = args.filter { it.startsWith("-d=") }.map { it.removePrefix("-d=") }
-        .ifEmpty { listOf(System.getProperty("user.dir")) }
+    val webMode = args.any { it == "--web" }
+    val explicitDirs = args.filter { it.startsWith("-d=") }.map { it.removePrefix("-d=") }
+    val targetDirs = when {
+        explicitDirs.isNotEmpty() -> explicitDirs
+        webMode -> emptyList()
+        else -> listOf(System.getProperty("user.dir"))
+    }
 
-    val primaryDir = targetDirs.first()
+    val primaryDir = targetDirs.firstOrNull() ?: System.getProperty("user.home")
     val configStorage = StrategyConfigStorage(primaryDir)
     val reader = BufferedReader(InputStreamReader(System.`in`, Charsets.UTF_8))
     val wizard = SetupWizard(configStorage)
-    val webMode = args.any { it == "--web" }
     val globalConfig = when {
         !wizard.needsSetup() -> loadConfig(configStorage)
         OllamaDiscovery.isRunning() -> autoConfigureFromOllama(configStorage)
@@ -64,7 +68,7 @@ fun main(args: Array<String>) = runBlocking {
             StrategyConfigStorage(dir).load().copy(apiKeys = globalConfig.apiKeys)
         agents[name] = DevPilotAgent(projectConfig, ProjectMemoryStorage("$dir/DEVPILOT.md"), dir)
     }
-    val agent = agents.values.first()  // CLI 모드용
+    val agent = agents.values.firstOrNull()  // CLI 모드용 (웹 단독 모드에서는 null)
 
     val memoryStorage = ProjectMemoryStorage("$primaryDir/DEVPILOT.md")
     val registry = CommandRegistry()
@@ -74,8 +78,7 @@ fun main(args: Array<String>) = runBlocking {
         ClearCommand(),
         ConfigCommand(configStorage) { newConfig -> agents.values.forEach { it.updateConfig(newConfig) } },
         ModelCommand { override ->
-            if (override == null) agent.resetSessionOverride()
-            else agent.sessionModelOverride = override
+            agent?.let { if (override == null) it.resetSessionOverride() else it.sessionModelOverride = override }
         },
         ModeCommand(agent),
         SetupCommand(wizard, reader) { newConfig -> agents.values.forEach { it.updateConfig(newConfig) } },
@@ -103,12 +106,14 @@ fun main(args: Array<String>) = runBlocking {
     if (agents.size > 1) {
         println("  프로젝트 (${agents.size}개):")
         agents.forEach { (name, a) -> println("    • $name  →  ${a.conversationHistory.getAllEntries().size / 2}턴 이력") }
-    } else {
+    } else if (agent != null) {
         println("  분석 대상: $primaryDir")
         val memoryCount = memoryStorage.load().size
         if (memoryCount > 0) println("  프로젝트 메모리: ${memoryCount}개 항목 로드됨")
         val historyCount = agent.conversationHistory.getAllEntries().size
         if (historyCount > 0) println("  대화 이력: ${historyCount / 2}개 턴 복원됨 (이전 세션)")
+    } else {
+        println("  웹 UI에서 프로젝트를 추가해 시작하세요.")
     }
     println()
     println("  낯선 코드베이스, 이런 질문들을 바로 물어보세요:")
@@ -150,7 +155,7 @@ fun main(args: Array<String>) = runBlocking {
                 }
                 is CommandResult.Error -> println("\n오류: ${result.message}\n")
                 is CommandResult.ClearSession -> {
-                    agent.clear()
+                    agent!!.clear()
                     println("\n세션이 초기화되었습니다.\n")
                 }
                 is CommandResult.Exit -> break
@@ -160,10 +165,10 @@ fun main(args: Array<String>) = runBlocking {
         }
 
         println()
-        val response = agent.chat(input)
+        val response = agent!!.chat(input)
         val sep = "─".repeat(60)
         println("\n$sep")
-        println("  DevPilot  [${agent.lastUsedModel}]")
+        println("  DevPilot  [${agent!!.lastUsedModel}]")
         println(sep)
         println(response)
         println("$sep\n")
