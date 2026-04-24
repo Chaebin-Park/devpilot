@@ -55,7 +55,7 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
             // ── REST API ──────────────────────────────────────────────
             get("/api/config") {
                 val p = call.request.queryParameters["p"]
-                val agent = (if (p != null) agents[p] else null) ?: agents.values.first()
+                val agent = (if (p != null) agents[p] else null) ?: agents.values.firstOrNull()
                 val cfg = configStorage.load()
                 val s = cfg.strategy
                 call.respondText(buildJsonObject {
@@ -64,6 +64,10 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
                         put("provider", s.primary.provider.name.lowercase())
                         put("modelId",  s.primary.modelId)
                     })
+                    put("fallback", s.fallback?.let { fb -> buildJsonObject {
+                        put("provider", fb.provider.name.lowercase())
+                        put("modelId",  fb.modelId)
+                    }} ?: JsonNull)
                     put("specialists", buildJsonObject {
                         s.specialists.forEach { (type, mc) ->
                             put(type, buildJsonObject {
@@ -75,7 +79,7 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
                     put("apiKeys", buildJsonObject {
                         cfg.apiKeys.forEach { (k, v) -> put(k, v.take(8) + "…") }
                     })
-                    put("sessionModel", agent.sessionModelOverride?.let {
+                    put("sessionModel", agent?.sessionModelOverride?.let {
                         buildJsonObject { put("provider", it.provider.name.lowercase()); put("modelId", it.modelId) }
                     } ?: JsonNull)
                     put("projects", buildJsonArray { agents.keys.forEach { add(it) } })
@@ -135,6 +139,43 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
                 configStorage.save(updated)
                 agents.values.forEach { it.updateConfig(updated) }
                 call.respondOk("프리셋 '$name'이(가) 적용되었습니다.")
+            }
+
+
+            post("/api/config/fallback") {
+                val body = call.receiveText().parseJson()
+                val clear = body["clear"]?.jsonPrimitive?.booleanOrNull ?: false
+                val cfg = configStorage.load()
+                val updated = if (clear) {
+                    cfg.copy(strategy = cfg.strategy.copy(fallback = null))
+                } else {
+                    val providerStr = body["provider"]?.jsonPrimitive?.content?.uppercase()
+                        ?: return@post call.respondError("provider 필드가 필요합니다")
+                    val modelId = body["modelId"]?.jsonPrimitive?.content
+                        ?: return@post call.respondError("modelId 필드가 필요합니다")
+                    val provider = runCatching { devpilot.config.Provider.valueOf(providerStr) }
+                        .getOrElse { return@post call.respondError("유효하지 않은 provider: $providerStr") }
+                    cfg.copy(strategy = cfg.strategy.copy(fallback = devpilot.config.ModelConfig(provider, modelId)))
+                }
+                configStorage.save(updated)
+                agents.values.forEach { it.updateConfig(updated) }
+                if (clear) call.respondOk("Fallback 모델이 제거되었습니다.")
+                else call.respondOk("Fallback 모델이 설정되었습니다.")
+            }
+
+            // ── 사용 가능한 모델 목록 ─────────────────────────────────
+            get("/api/models") {
+                val cfg = configStorage.load()
+                val ollamaModels = devpilot.config.OllamaDiscovery.listModels()
+                val cloudProviders = buildList {
+                    if (cfg.apiKeys.containsKey("google") || !System.getenv("GOOGLE_API_KEY").isNullOrBlank()) add("google")
+                    if (cfg.apiKeys.containsKey("anthropic") || !System.getenv("ANTHROPIC_API_KEY").isNullOrBlank()) add("anthropic")
+                    if (cfg.apiKeys.containsKey("openai") || !System.getenv("OPENAI_API_KEY").isNullOrBlank()) add("openai")
+                }
+                call.respondText(buildJsonObject {
+                    put("ollama", buildJsonArray { ollamaModels.forEach { add(it) } })
+                    put("cloud", buildJsonArray { cloudProviders.forEach { add(it) } })
+                }.toString(), ContentType.Application.Json)
             }
 
             // ── 디렉터리 브라우저 ──────────────────────────────────────
@@ -905,47 +946,39 @@ private fun settingsHtml() = """
   header h1 { font-size: 16px; font-weight: 600; }
   header a { color: #58a6ff; font-size: 13px; text-decoration: none; }
   header a:hover { text-decoration: underline; }
-  .container { max-width: 760px; margin: 32px auto; padding: 0 24px 60px; }
-  .tabs { display: flex; gap: 2px; border-bottom: 1px solid #21262d; margin-bottom: 28px; }
-  .tab { padding: 8px 18px; font-size: 13px; color: #8b949e; cursor: pointer; border-bottom: 2px solid transparent; background: none; border-top: none; border-left: none; border-right: none; transition: color .15s; }
-  .tab:hover { color: #e6edf3; }
-  .tab.active { color: #e6edf3; border-bottom-color: #1f6feb; }
-  .panel { display: none; }
-  .panel.active { display: block; }
-  .section-title { font-size: 14px; font-weight: 600; color: #e6edf3; margin-bottom: 16px; }
-  .field { margin-bottom: 18px; }
+  .container { max-width: 640px; margin: 36px auto; padding: 0 24px 60px; }
+  .section { margin-bottom: 36px; }
+  .section-title { font-size: 14px; font-weight: 600; color: #e6edf3; margin-bottom: 6px; }
+  .section-desc { font-size: 12px; color: #6e7681; margin-bottom: 16px; }
+  .model-grid { display: flex; flex-direction: column; gap: 8px; }
+  .model-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; cursor: pointer; transition: border-color .15s, background .15s; }
+  .model-card:hover { border-color: #58a6ff; background: #1c2128; }
+  .model-card.selected { border-color: #1f6feb; background: #1c2333; }
+  .model-card .icon { font-size: 22px; flex-shrink: 0; }
+  .model-card .info { flex: 1; }
+  .model-card .name { font-size: 14px; font-weight: 600; color: #e6edf3; }
+  .model-card .sub  { font-size: 12px; color: #8b949e; margin-top: 2px; }
+  .model-card .check { font-size: 18px; color: #1f6feb; display: none; }
+  .model-card.selected .check { display: block; }
+  .none-card { border-style: dashed; opacity: .7; }
+  .none-card:hover { opacity: 1; }
+  .divider { border: none; border-top: 1px solid #21262d; margin: 32px 0; }
+  .field { margin-bottom: 14px; }
   .field label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
-  .field input, .field select { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; padding: 8px 12px; outline: none; transition: border-color .15s; }
-  .field input:focus, .field select:focus { border-color: #1f6feb; }
-  .field select option { background: #161b22; }
-  .row { display: flex; gap: 10px; }
-  .row .field { flex: 1; }
-  .btn { padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: background .15s; }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row .field { flex: 1; margin: 0; }
+  .field input { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; padding: 8px 12px; outline: none; transition: border-color .15s; }
+  .field input:focus { border-color: #1f6feb; }
+  .btn { padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: background .15s; white-space: nowrap; }
   .btn-primary { background: #1f6feb; color: #fff; }
   .btn-primary:hover { background: #388bfd; }
-  .btn-secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
-  .btn-secondary:hover { background: #30363d; }
-  .btn-danger { background: #da3633; color: #fff; }
-  .btn-danger:hover { background: #f85149; }
-  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .preset-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; cursor: pointer; transition: border-color .15s, background .15s; }
-  .preset-card:hover { border-color: #1f6feb; background: #1f2937; }
-  .preset-card.active { border-color: #1f6feb; background: #1f2937; }
-  .preset-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-  .preset-card p { font-size: 11px; color: #8b949e; line-height: 1.5; }
-  .status-bar { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; font-size: 12px; line-height: 1.8; }
-  .status-bar .key { color: #8b949e; }
-  .status-bar .val { color: #3fb950; font-family: monospace; }
+  .loading { color: #6e7681; font-size: 13px; padding: 20px 0; }
+  .badge { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+  .badge-green { background: #1a3a2a; color: #3fb950; border: 1px solid #2ea04322; }
+  .badge-blue  { background: #1c2333; color: #58a6ff; border: 1px solid #1f6feb33; }
   .toast { position: fixed; bottom: 24px; right: 24px; background: #1f6feb; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 100; }
   .toast.show { opacity: 1; }
   .toast.error { background: #da3633; }
-  .divider { border: none; border-top: 1px solid #21262d; margin: 24px 0; }
-  .hint { font-size: 11px; color: #6e7681; margin-top: 5px; }
-  .radio-group { display: flex; gap: 12px; flex-wrap: wrap; }
-  .radio-label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13px; padding: 7px 14px; border: 1px solid #30363d; border-radius: 6px; transition: border-color .15s; }
-  .radio-label:hover { border-color: #58a6ff; }
-  .radio-label input[type=radio] { accent-color: #1f6feb; }
-  .radio-label.selected { border-color: #1f6feb; background: #1f2937; }
   ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 </style>
 </head>
@@ -956,247 +989,150 @@ private fun settingsHtml() = """
   <a href="/">← 채팅으로 돌아가기</a>
 </header>
 <div class="container">
+  <div id="loading" class="loading">모델 목록을 불러오는 중...</div>
+  <div id="main" style="display:none">
 
-  <div id="status-bar" class="status-bar">로딩 중...</div>
+    <!-- Primary -->
+    <div class="section">
+      <div class="section-title">Primary 모델</div>
+      <div class="section-desc">기본으로 사용할 AI 모델입니다.</div>
+      <div class="model-grid" id="primary-grid"></div>
+    </div>
 
-  <div class="tabs">
-    <button class="tab active" onclick="switchTab('apikeys')">API 키</button>
-    <button class="tab" onclick="switchTab('strategy')">전략 & 모델</button>
-    <button class="tab" onclick="switchTab('presets')">프리셋</button>
-    <button class="tab" onclick="switchTab('session')">세션 모델</button>
-  </div>
-
-  <!-- ── API 키 탭 ── -->
-  <div id="tab-apikeys" class="panel active">
-    <p class="hint" style="margin-bottom:20px">API 키는 <code>~/.devpilot/config.json</code>에 로컬 저장됩니다. 외부로 전송되지 않습니다.</p>
-    <div class="field">
-      <label>Google API Key (Gemini)</label>
-      <div class="row" style="align-items:flex-end">
-        <div class="field" style="margin:0"><input id="key-google" type="password" placeholder="AIza..." autocomplete="off"></div>
-        <button class="btn btn-primary" onclick="saveKey('google')">저장</button>
-      </div>
-    </div>
-    <div class="field">
-      <label>Anthropic API Key (Claude)</label>
-      <div class="row" style="align-items:flex-end">
-        <div class="field" style="margin:0"><input id="key-anthropic" type="password" placeholder="sk-ant-..." autocomplete="off"></div>
-        <button class="btn btn-primary" onclick="saveKey('anthropic')">저장</button>
-      </div>
-    </div>
-    <div class="field">
-      <label>OpenAI API Key (GPT)</label>
-      <div class="row" style="align-items:flex-end">
-        <div class="field" style="margin:0"><input id="key-openai" type="password" placeholder="sk-..." autocomplete="off"></div>
-        <button class="btn btn-primary" onclick="saveKey('openai')">저장</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── 전략 탭 ── -->
-  <div id="tab-strategy" class="panel">
-    <div class="field">
-      <label>라우팅 전략</label>
-      <div class="radio-group" id="strategy-group">
-        <label class="radio-label" id="radio-auto">
-          <input type="radio" name="strategy" value="auto" onchange="saveStrategy('auto')">
-          auto <span style="color:#6e7681;font-size:11px">— 질문 유형별 전문 에이전트</span>
-        </label>
-        <label class="radio-label" id="radio-primary">
-          <input type="radio" name="strategy" value="primary" onchange="saveStrategy('primary')">
-          primary <span style="color:#6e7681;font-size:11px">— 항상 primary 먼저</span>
-        </label>
-        <label class="radio-label" id="radio-manual">
-          <input type="radio" name="strategy" value="manual" onchange="saveStrategy('manual')">
-          manual <span style="color:#6e7681;font-size:11px">— /model로 지정한 모델만</span>
-        </label>
-      </div>
-    </div>
     <hr class="divider">
-    <div class="section-title">Primary 모델</div>
-    <div class="row">
-      <div class="field">
-        <label>Provider</label>
-        <select id="primary-provider" onchange="updateModelHint()">
-          <option value="google">Google (Gemini)</option>
-          <option value="anthropic">Anthropic (Claude)</option>
-          <option value="openai">OpenAI (GPT)</option>
-          <option value="ollama">Ollama (Local)</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Model ID</label>
-        <input id="primary-model" type="text" placeholder="gemini-2.5-flash">
-        <div id="model-hint" class="hint"></div>
-      </div>
-    </div>
-    <button class="btn btn-primary" onclick="savePrimary()">Primary 모델 저장</button>
-  </div>
 
-  <!-- ── 프리셋 탭 ── -->
-  <div id="tab-presets" class="panel">
-    <p style="font-size:13px;color:#8b949e;margin-bottom:20px">프리셋을 선택하면 전략과 모델 매핑이 한 번에 적용됩니다.</p>
-    <div class="card-grid">
-      <div class="preset-card" id="preset-cloud-google" onclick="applyPreset('cloud-google')">
-        <h3>☁ Cloud Google</h3>
-        <p>Gemini Flash/Pro<br>auto 전략<br>API 키 필요</p>
+    <!-- Fallback -->
+    <div class="section">
+      <div class="section-title">Fallback 모델 <span style="font-size:11px;font-weight:400;color:#6e7681">(선택사항)</span></div>
+      <div class="section-desc">Primary 실패 시 대신 사용할 모델입니다.</div>
+      <div class="model-grid" id="fallback-grid"></div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- API 키 -->
+    <div class="section">
+      <div class="section-title">API 키</div>
+      <div class="section-desc">클라우드 모델을 사용하려면 API 키가 필요합니다. <code style="font-size:11px;color:#8b949e">~/.devpilot/config.json</code>에 저장됩니다.</div>
+      <div class="field">
+        <label>Google API Key (Gemini)</label>
+        <div class="row">
+          <div class="field"><input id="key-google" type="password" placeholder="AIza..." autocomplete="off"></div>
+          <button class="btn btn-primary" onclick="saveKey('google')">저장</button>
+        </div>
       </div>
-      <div class="preset-card" id="preset-cloud-claude" onclick="applyPreset('cloud-claude')">
-        <h3>☁ Cloud Claude</h3>
-        <p>Claude Haiku/Sonnet/Opus<br>auto 전략<br>API 키 필요</p>
+      <div class="field">
+        <label>Anthropic API Key (Claude)</label>
+        <div class="row">
+          <div class="field"><input id="key-anthropic" type="password" placeholder="sk-ant-..." autocomplete="off"></div>
+          <button class="btn btn-primary" onclick="saveKey('anthropic')">저장</button>
+        </div>
       </div>
-      <div class="preset-card" id="preset-local" onclick="applyPreset('local')">
-        <h3>💻 Fully Local</h3>
-        <p>qwen3 / qwen3-coder<br>auto 전략<br>Ollama 필요</p>
-      </div>
-      <div class="preset-card" id="preset-hybrid" onclick="applyPreset('hybrid')">
-        <h3>⚡ Hybrid</h3>
-        <p>Gemini + qwen3-coder<br>auto 전략<br>Gemini + Ollama</p>
+      <div class="field">
+        <label>OpenAI API Key (GPT)</label>
+        <div class="row">
+          <div class="field"><input id="key-openai" type="password" placeholder="sk-..." autocomplete="off"></div>
+          <button class="btn btn-primary" onclick="saveKey('openai')">저장</button>
+        </div>
       </div>
     </div>
   </div>
-
-  <!-- ── 세션 모델 탭 ── -->
-  <div id="tab-session" class="panel">
-    <p style="font-size:13px;color:#8b949e;margin-bottom:20px">이번 세션에만 특정 모델을 고정합니다. 서버 재시작 시 초기화됩니다.</p>
-    <div class="row">
-      <div class="field">
-        <label>Provider</label>
-        <select id="session-provider">
-          <option value="google">Google (Gemini)</option>
-          <option value="anthropic">Anthropic (Claude)</option>
-          <option value="openai">OpenAI (GPT)</option>
-          <option value="ollama">Ollama (Local)</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Model ID</label>
-        <input id="session-model" type="text" placeholder="gemini-2.5-flash">
-      </div>
-    </div>
-    <div style="display:flex;gap:10px">
-      <button class="btn btn-primary" onclick="setSessionModel()">이 모델로 고정</button>
-      <button class="btn btn-danger" onclick="resetSessionModel()">고정 해제</button>
-    </div>
-    <div id="session-current" style="margin-top:16px;font-size:12px;color:#6e7681"></div>
-  </div>
-
 </div>
-
 <div class="toast" id="toast"></div>
-
 <script>
-let cfg = {};
+const CLOUD_DEFAULTS = {
+  google:    { modelId: 'gemini-2.5-flash', label: 'Google Gemini', sub: 'gemini-2.5-flash', icon: '☁' },
+  anthropic: { modelId: 'claude-sonnet-4-6', label: 'Anthropic Claude', sub: 'claude-sonnet-4-6', icon: '☁' },
+  openai:    { modelId: 'gpt-4o', label: 'OpenAI GPT', sub: 'gpt-4o', icon: '☁' },
+};
 
-async function loadConfig() {
-  const res = await fetch('/api/config');
-  cfg = await res.json();
-  renderStatus();
-  renderStrategyTab();
-  renderSessionTab();
+let cfg = {}, models = {};
+let primarySel = null, fallbackSel = null;
+
+async function load() {
+  [cfg, models] = await Promise.all([
+    fetch('/api/config').then(r => r.json()),
+    fetch('/api/models').then(r => r.json()),
+  ]);
+  primarySel = cfg.primary ? { provider: cfg.primary.provider, modelId: cfg.primary.modelId } : null;
+  const fb = cfg.strategy?.fallback || cfg.fallback || null;
+  fallbackSel = fb ? { provider: fb.provider, modelId: fb.modelId } : null;
+  renderGrids();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('main').style.display = '';
 }
 
-function renderStatus() {
-  const s = cfg;
-  const keys = Object.keys(s.apiKeys||{});
-  document.getElementById('status-bar').innerHTML =
-    '<span class="key">전략:</span> <span class="val">' + (s.strategy||'—') + '</span> &nbsp;|&nbsp; ' +
-    '<span class="key">Primary:</span> <span class="val">' + (s.primary ? s.primary.provider+'/'+s.primary.modelId : '—') + '</span> &nbsp;|&nbsp; ' +
-    '<span class="key">API 키:</span> <span class="val">' + (keys.length ? keys.join(', ') : '없음') + '</span>' +
-    (s.sessionModel ? ' &nbsp;|&nbsp; <span class="key">세션 모델:</span> <span class="val" style="color:#ffa657">' + s.sessionModel.provider+'/'+s.sessionModel.modelId + '</span>' : '');
+function makeCard(provider, modelId, label, sub, icon, isNone) {
+  const card = document.createElement('div');
+  card.className = 'model-card' + (isNone ? ' none-card' : '');
+  card.dataset.provider = provider;
+  card.dataset.modelId = modelId;
+  card.innerHTML = '<span class="icon">' + icon + '</span><div class="info"><div class="name">' + label + '</div><div class="sub">' + sub + '</div></div><span class="check">✓</span>';
+  return card;
 }
 
-function renderStrategyTab() {
-  ['auto','primary','manual'].forEach(v => {
-    const el = document.getElementById('radio-'+v);
-    const radio = el.querySelector('input');
-    radio.checked = cfg.strategy === v;
-    el.classList.toggle('selected', cfg.strategy === v);
+function buildCards(forFallback) {
+  const cards = [];
+  (models.ollama || []).forEach(m => {
+    cards.push({ provider: 'ollama', modelId: m, label: m, sub: 'Ollama 로컬 · 무료', icon: '🦙' });
   });
-  if (cfg.primary) {
-    document.getElementById('primary-provider').value = cfg.primary.provider;
-    document.getElementById('primary-model').value = cfg.primary.modelId;
-    updateModelHint();
-  }
-}
-
-function renderSessionTab() {
-  const el = document.getElementById('session-current');
-  if (cfg.sessionModel) {
-    el.innerHTML = '현재 고정 모델: <span style="color:#ffa657;font-family:monospace">' + cfg.sessionModel.provider+'/'+cfg.sessionModel.modelId + '</span>';
-    document.getElementById('session-provider').value = cfg.sessionModel.provider;
-    document.getElementById('session-model').value = cfg.sessionModel.modelId;
-  } else {
-    el.textContent = '세션 모델 고정 없음 (설정 파일의 전략 사용)';
-  }
-}
-
-function updateModelHint() {
-  const p = document.getElementById('primary-provider').value;
-  const hints = {
-    google: 'gemini-2.5-flash | gemini-2.5-pro',
-    anthropic: 'claude-haiku-4-5 | claude-sonnet-4-6 | claude-opus-4',
-    openai: 'gpt-4o | gpt-4o-mini | o3',
-    ollama: 'qwen3 | qwen3-coder | gemma4:26b',
-  };
-  document.getElementById('model-hint').textContent = hints[p] || '';
-}
-
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => {
-    const names = ['apikeys','strategy','presets','session'];
-    t.classList.toggle('active', names[i] === name);
+  (models.cloud || []).forEach(p => {
+    const d = CLOUD_DEFAULTS[p];
+    if (d) cards.push({ provider: p, modelId: d.modelId, label: d.label, sub: d.sub, icon: d.icon });
   });
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('tab-'+name).classList.add('active');
+  return cards;
+}
+
+function renderGrids() {
+  renderGrid('primary-grid', false);
+  renderGrid('fallback-grid', true);
+}
+
+function renderGrid(gridId, forFallback) {
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  const sel = forFallback ? fallbackSel : primarySel;
+
+  if (forFallback) {
+    const none = makeCard('', '', '없음', 'Fallback 모델을 사용하지 않습니다', '⊘', true);
+    if (!sel) none.classList.add('selected');
+    none.onclick = () => selectModel(true, null);
+    grid.appendChild(none);
+  }
+
+  buildCards(forFallback).forEach(({ provider, modelId, label, sub, icon }) => {
+    const card = makeCard(provider, modelId, label, sub, icon, false);
+    const isSelected = sel && sel.provider === provider && sel.modelId === modelId;
+    if (isSelected) card.classList.add('selected');
+    card.onclick = () => selectModel(forFallback, { provider, modelId });
+    grid.appendChild(card);
+  });
+}
+
+async function selectModel(forFallback, sel) {
+  if (forFallback) fallbackSel = sel;
+  else primarySel = sel;
+  renderGrids();
+
+  if (forFallback) {
+    const res = await post('/api/config/fallback', sel ? { provider: sel.provider, modelId: sel.modelId } : { clear: true });
+    showToast(res.ok ? (sel ? 'Fallback: ' + sel.provider + '/' + sel.modelId : 'Fallback 제거됨') : res.message, !res.ok);
+  } else if (sel) {
+    const res = await post('/api/config/primary', { provider: sel.provider, modelId: sel.modelId });
+    showToast(res.ok ? 'Primary: ' + sel.provider + '/' + sel.modelId : res.message, !res.ok);
+  }
 }
 
 async function saveKey(provider) {
-  const key = document.getElementById('key-'+provider).value.trim();
+  const key = document.getElementById('key-' + provider).value.trim();
   if (!key) return showToast('API 키를 입력하세요.', true);
   const res = await post('/api/config/apikey', { provider, key });
-  if (res.ok) { showToast(res.message); document.getElementById('key-'+provider).value=''; loadConfig(); }
-  else showToast(res.message, true);
-}
-
-async function saveStrategy(strategy) {
-  ['auto','primary','manual'].forEach(v => {
-    document.getElementById('radio-'+v).classList.toggle('selected', v === strategy);
-  });
-  const res = await post('/api/config/strategy', { strategy });
-  if (res.ok) { showToast(res.message); loadConfig(); }
-  else showToast(res.message, true);
-}
-
-async function savePrimary() {
-  const provider = document.getElementById('primary-provider').value;
-  const modelId  = document.getElementById('primary-model').value.trim();
-  if (!modelId) return showToast('Model ID를 입력하세요.', true);
-  const res = await post('/api/config/primary', { provider, modelId });
-  if (res.ok) { showToast(res.message); loadConfig(); }
-  else showToast(res.message, true);
-}
-
-async function applyPreset(name) {
-  document.querySelectorAll('.preset-card').forEach(c => c.classList.remove('active'));
-  document.getElementById('preset-'+name).classList.add('active');
-  const res = await post('/api/config/preset', { name });
-  if (res.ok) { showToast(res.message); loadConfig(); renderStrategyTab(); }
-  else showToast(res.message, true);
-}
-
-async function setSessionModel() {
-  const provider = document.getElementById('session-provider').value;
-  const modelId  = document.getElementById('session-model').value.trim();
-  if (!modelId) return showToast('Model ID를 입력하세요.', true);
-  const res = await post('/api/model', { provider, modelId });
-  if (res.ok) { showToast(res.message); loadConfig(); }
-  else showToast(res.message, true);
-}
-
-async function resetSessionModel() {
-  const res = await post('/api/model', { reset: true });
-  if (res.ok) { showToast(res.message); loadConfig(); }
-  else showToast(res.message, true);
+  if (res.ok) {
+    showToast(res.message);
+    document.getElementById('key-' + provider).value = '';
+    [cfg, models] = await Promise.all([fetch('/api/config').then(r=>r.json()), fetch('/api/models').then(r=>r.json())]);
+    renderGrids();
+  } else showToast(res.message, true);
 }
 
 async function post(url, body) {
@@ -1211,7 +1147,7 @@ function showToast(msg, error=false) {
   setTimeout(() => t.className = 'toast', 2800);
 }
 
-loadConfig();
+load();
 </script>
 </body>
 </html>
