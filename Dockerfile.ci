@@ -1,9 +1,9 @@
 # CI 전용: 사전 빌드된 JAR을 복사 (Gradle 빌드 생략)
 # 로컬 개발 시에는 Dockerfile 사용
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
-RUN apk add --no-cache ripgrep
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
 
 COPY build/libs/devpilot.jar .
 

@@ -5,10 +5,10 @@ COPY . .
 RUN ./gradlew shadowJar --no-daemon -q
 
 # Stage 2: Runtime
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
-RUN apk add --no-cache ripgrep
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/build/libs/devpilot.jar .
 
