@@ -1,0 +1,31 @@
+[versions]
+koog = "0.8.0"
+kotlin = "2.3.20"
+kotlinx-coroutines = "1.10.2"
+kotlinx-serialization = "1.10.0"
+kotlin-logging = "8.0.01"
+logback = "1.5.32"
+mockk = "1.13.8"
+ktor = "3.2.3"
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+
+[libraries]
+koog-agents    = { module = "ai.koog:koog-agents", version.ref = "koog" }
+koog-tools     = { module = "ai.koog:agents-tools-jvm", version.ref = "koog" }
+koog-google    = { module = "ai.koog:prompt-executor-google-client-jvm", version.ref = "koog" }
+koog-ollama    = { module = "ai.koog:prompt-executor-ollama-client-jvm", version.ref = "koog" }
+koog-anthropic = { module = "ai.koog:prompt-executor-anthropic-client-jvm", version.ref = "koog" }
+koog-openai    = { module = "ai.koog:prompt-executor-openai-client-jvm", version.ref = "koog" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlin-logging = { module = "io.github.oshai:kotlin-logging-jvm", version.ref = "kotlin-logging" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
+ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
