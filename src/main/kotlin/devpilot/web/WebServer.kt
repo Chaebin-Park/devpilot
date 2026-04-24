@@ -131,23 +131,28 @@ fun startWebServer(agents: LinkedHashMap<String, DevPilotAgent>, configStorage: 
 
             // ── 디렉터리 브라우저 ──────────────────────────────────────
             get("/api/browse") {
-                val browseRoot = System.getenv("DEVPILOT_BROWSE_ROOT")
-                    ?.takeIf { it.isNotBlank() }
-                    ?: System.getProperty("user.home")
+                val browseRoot = java.io.File(
+                    System.getenv("DEVPILOT_BROWSE_ROOT")?.takeIf { it.isNotBlank() }
+                        ?: System.getProperty("user.home")
+                ).canonicalPath
                 val path = call.request.queryParameters["path"]
                     ?.takeIf { it.isNotBlank() }
                     ?: browseRoot
                 val dir = java.io.File(path)
                 if (!dir.exists() || !dir.isDirectory)
                     return@get call.respondError("유효하지 않은 경로: $path")
+                val canonical = dir.canonicalPath
+                if (!canonical.startsWith(browseRoot))
+                    return@get call.respondError("접근 불가 경로: $path")
+                val parent = if (canonical == browseRoot) "" else (dir.parent ?: "")
                 val dirs = dir.listFiles()
                     ?.filter { it.isDirectory && !it.name.startsWith(".") }
                     ?.sortedBy { it.name.lowercase() }
                     ?.map { it.name }
                     ?: emptyList()
                 call.respondText(buildJsonObject {
-                    put("path", dir.absolutePath)
-                    put("parent", dir.parent ?: "")
+                    put("path", canonical)
+                    put("parent", parent)
                     put("dirs", buildJsonArray { dirs.forEach { add(it) } })
                 }.toString(), ContentType.Application.Json)
             }
