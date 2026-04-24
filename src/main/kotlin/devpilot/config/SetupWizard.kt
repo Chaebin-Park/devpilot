@@ -185,6 +185,7 @@ class SetupWizard(private val storage: StrategyConfigStorage) {
     private fun readChoiceRequired(reader: BufferedReader, max: Int): Int {
         while (true) {
             print("  선택 [1-$max]: ")
+            System.out.flush()
             val raw = reader.readLine()?.trim() ?: continue
             val n = raw.toIntOrNull()
             if (n != null && n in 1..max) return n
@@ -194,6 +195,7 @@ class SetupWizard(private val storage: StrategyConfigStorage) {
 
     private fun readChoiceOptional(reader: BufferedReader, max: Int): Int? {
         print("  선택 [1-$max] (Enter 건너뜀): ")
+        System.out.flush()
         val raw = reader.readLine()?.trim() ?: return null
         if (raw.isBlank()) return null
         val n = raw.toIntOrNull()
