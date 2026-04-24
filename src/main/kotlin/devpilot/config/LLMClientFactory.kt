@@ -19,7 +19,11 @@ object LLMClientFactory {
             Provider.GOOGLE    -> MultiLLMPromptExecutor(GoogleLLMClient(key ?: envKey("GOOGLE_API_KEY")))
             Provider.ANTHROPIC -> MultiLLMPromptExecutor(AnthropicLLMClient(key ?: envKey("ANTHROPIC_API_KEY")))
             Provider.OPENAI    -> MultiLLMPromptExecutor(OpenAILLMClient(key ?: envKey("OPENAI_API_KEY")))
-            Provider.OLLAMA    -> MultiLLMPromptExecutor(OllamaClient(config.baseUrl ?: "http://localhost:11434"))
+            Provider.OLLAMA    -> MultiLLMPromptExecutor(OllamaClient(
+                config.baseUrl
+                    ?: System.getenv("OLLAMA_HOST")?.trimEnd('/')
+                    ?: "http://localhost:11434"
+            ))
         }
     }
 
