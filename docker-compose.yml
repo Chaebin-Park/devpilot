@@ -20,6 +20,16 @@ services:
     entrypoint: ["/bin/sh", "-c", "ollama pull ${OLLAMA_MODEL:-llama3.2}"]
     restart: "no"
 
+  ollama-pull-gemma4:
+    image: ollama/ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull gemma4:26b"]
+    restart: "no"
+
   devpilot:
     image: ghcr.io/chaebin-park/devpilot:latest
     ports:
@@ -36,6 +46,8 @@ services:
     command: ["--web"]
     depends_on:
       ollama-pull:
+        condition: service_completed_successfully
+      ollama-pull-gemma4:
         condition: service_completed_successfully
 
 volumes:
