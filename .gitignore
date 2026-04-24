@@ -1,7 +1,22 @@
+# Build
 .gradle/
 build/
-local.properties
+*.jar
+
+# IDE
 .idea/
 *.iml
+.kotlin/
+
+# Secrets
+local.properties
+.env
+
+# OS
 .DS_Store
-DEVPILOT.md
+
+# DevPilot runtime (세션 이력, 작업 메모리 — 개인 데이터)
+.devpilot/
+
+# Claude Code internal state
+.omc/

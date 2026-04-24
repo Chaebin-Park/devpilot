@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"./gradlew compileKotlin 2>&1\",\"timeout\":120000,\"description\":\"Compile with updated shadow plugin\"}",
-  "error": "Exit code 1\n\n> Configure project :\ne: file:///Users/chaebin/20_Company/Dev/Koog/DevPilot/build.gradle.kts:61:12: No type arguments expected for fun named(name: String, configurationAction: Action<in Task>): TaskProvider<Task!>.\ne: file:///Users/chaebin/20_Company/Dev/Koog/DevPilot/build.gradle.kts:61:17: Unresolved reference 'gradleup'.\ne: file:///Users/chaebin/20_Company/Dev/Koog/DevPilot/build.gradle.kts:62:5: Unresolved reference 'archiveBaseName'.\ne: file:///Users/chaebin/20_Company/Dev/Koog...",
-  "timestamp": "2026-04-23T08:36:49.896Z",
-  "retry_count": 2
-}
