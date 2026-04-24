@@ -1,0 +1,10 @@
+.gradle/
+build/
+.idea/
+.kotlin/
+.omc/
+.devpilot/
+.git/
+*.md
+.env
+local.properties
